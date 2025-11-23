@@ -1,0 +1,5 @@
+categoria_velocidad,velocidad_promedio,velocidad_id
+ESTATICO,0.03,1
+CAMINANDO,2.98,2
+BICICLETA,11.99,3
+VEHICULO,22.08,4

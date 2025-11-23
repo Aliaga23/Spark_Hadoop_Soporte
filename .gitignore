@@ -26,12 +26,6 @@ wheels/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Data files
-*.csv
-*.parquet
-*.json
-!locations_rows.csv
-
 
 # IDE
 .vscode/
