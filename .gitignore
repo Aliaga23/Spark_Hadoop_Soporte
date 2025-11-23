@@ -32,9 +32,6 @@ wheels/
 *.json
 !locations_rows.csv
 
-# Output directories
-output/
-*.html
 
 # IDE
 .vscode/
