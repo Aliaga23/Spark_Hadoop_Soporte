@@ -4,7 +4,6 @@ from pyspark.sql.window import Window
 from pyspark.sql.types import *
 import os
 
-# Configurar Spark
 spark = SparkSession.builder \
     .appName("DataWarehouse ETL") \
     .config("spark.driver.memory", "4g") \
@@ -15,12 +14,10 @@ print("=" * 80)
 print("ETL DATA WAREHOUSE - COBERTURA MOVIL")
 print("=" * 80)
 
-# Leer datos origen
 print("\n[1/9] Cargando datos origen...")
 df = spark.read.csv("locations_rows.csv", header=True, inferSchema=True)
 print(f"   Total registros: {df.count():,}")
 
-# Limpiar y preparar datos
 print("\n[2/9] Limpiando y preparando datos...")
 df = df.filter(
     col("latitude").isNotNull() & 
@@ -28,10 +25,8 @@ df = df.filter(
     col("timestamp").isNotNull()
 )
 
-# Convertir timestamp
 df = df.withColumn("timestamp", to_timestamp(col("timestamp")))
 
-# Normalizar operadores
 df = df.withColumn("operador_normalizado", 
     when(upper(col("sim_operator")).contains("ENTEL"), "ENTEL")
     .when(upper(col("sim_operator")).contains("TIGO"), "TIGO")
@@ -41,7 +36,6 @@ df = df.withColumn("operador_normalizado",
     .otherwise(upper(col("sim_operator")))
 )
 
-# Normalizar tipos de red
 df = df.withColumn("red_normalizada",
     when(upper(col("network_type")).contains("LTE"), "LTE")
     .when(upper(col("network_type")).contains("4G"), "4G")
@@ -51,7 +45,6 @@ df = df.withColumn("red_normalizada",
     .otherwise(upper(col("network_type")))
 )
 
-# Clasificar calidad de señal (solo basada en dBm)
 df = df.withColumn("calidad_senal",
     when(col("signal") >= -70, "EXCELENTE")
     .when(col("signal") >= -85, "BUENA")
@@ -60,7 +53,6 @@ df = df.withColumn("calidad_senal",
     .otherwise("CRITICA")
 )
 
-# Clasificar velocidad
 df = df.withColumn("categoria_velocidad",
     when(col("speed") < 1, "ESTATICO")
     .when(col("speed") < 7, "CAMINANDO")
@@ -69,23 +61,18 @@ df = df.withColumn("categoria_velocidad",
     .otherwise("ALTA_VELOCIDAD")
 )
 
-# Clasificar altitud
 df = df.withColumn("zona_altitud",
     when(col("altitude") < 2500, "BAJA")
     .when(col("altitude") < 3000, "MEDIA")
     .otherwise("ALTA")
 )
 
-# Crear sectores (grid de 0.0025 grados = ~250m)
 df = df.withColumn("lat_sector", (col("latitude") * 10000).cast("integer"))
 df = df.withColumn("lon_sector", (col("longitude") * 10000).cast("integer"))
 df = df.withColumn("sector_id", concat(col("lat_sector"), lit("_"), col("lon_sector")))
 
 print(f"   Registros válidos: {df.count():,}")
 
-# ============================================================================
-# DIMENSION TIEMPO
-# ============================================================================
 print("\n[3/9] Creando DIM_TIEMPO...")
 dim_tiempo = df.select("timestamp").distinct() \
     .withColumn("fecha", to_date(col("timestamp"))) \
@@ -115,9 +102,6 @@ dim_tiempo = df.select("timestamp").distinct() \
 dim_tiempo = dim_tiempo.withColumn("tiempo_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_tiempo.count()}")
 
-# ============================================================================
-# DIMENSION HORA
-# ============================================================================
 print("\n[4/9] Creando DIM_HORA...")
 dim_hora = df.select("timestamp").distinct() \
     .withColumn("hora", hour(col("timestamp"))) \
@@ -134,9 +118,6 @@ dim_hora = df.select("timestamp").distinct() \
 dim_hora = dim_hora.withColumn("hora_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_hora.count()}")
 
-# ============================================================================
-# DIMENSION OPERADOR
-# ============================================================================
 print("\n[5/9] Creando DIM_OPERADOR...")
 dim_operador = df.select("operador_normalizado").distinct() \
     .filter(col("operador_normalizado").isNotNull()) \
@@ -145,9 +126,6 @@ dim_operador = df.select("operador_normalizado").distinct() \
 dim_operador = dim_operador.withColumn("operador_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_operador.count()}")
 
-# ============================================================================
-# DIMENSION RED
-# ============================================================================
 print("\n[6/9] Creando DIM_RED...")
 dim_red = df.select("red_normalizada").distinct() \
     .filter(col("red_normalizada").isNotNull()) \
@@ -156,9 +134,6 @@ dim_red = df.select("red_normalizada").distinct() \
 dim_red = dim_red.withColumn("red_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_red.count()}")
 
-# ============================================================================
-# DIMENSION CALIDAD SEÑAL
-# ============================================================================
 print("\n[7/9] Creando DIM_CALIDAD...")
 dim_calidad = df.select("calidad_senal").distinct() \
     .orderBy(
@@ -172,9 +147,6 @@ dim_calidad = df.select("calidad_senal").distinct() \
 dim_calidad = dim_calidad.withColumn("calidad_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_calidad.count()}")
 
-# ============================================================================
-# DIMENSION VELOCIDAD
-# ============================================================================
 print("\n[8/9] Creando DIM_VELOCIDAD...")
 dim_velocidad = df.groupBy("categoria_velocidad") \
     .agg(round(avg("speed"), 2).alias("velocidad_promedio")) \
@@ -189,9 +161,6 @@ dim_velocidad = df.groupBy("categoria_velocidad") \
 dim_velocidad = dim_velocidad.withColumn("velocidad_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_velocidad.count()}")
 
-# ============================================================================
-# DIMENSION UBICACION (Sectores con polígonos)
-# ============================================================================
 print("\n[9/9] Creando DIM_UBICACION...")
 dim_ubicacion = df.groupBy("sector_id", "zona_altitud") \
     .agg(
@@ -206,9 +175,6 @@ dim_ubicacion = df.groupBy("sector_id", "zona_altitud") \
 dim_ubicacion = dim_ubicacion.withColumn("ubicacion_id", monotonically_increasing_id() + 1)
 print(f"   Registros (sectores): {dim_ubicacion.count()}")
 
-# ============================================================================
-# DIMENSION DISPOSITIVO
-# ============================================================================
 print("\n[10/9] Creando DIM_DISPOSITIVO...")
 dim_dispositivo = df.select("device_name").distinct() \
     .filter(col("device_name").isNotNull()) \
@@ -217,16 +183,11 @@ dim_dispositivo = df.select("device_name").distinct() \
 dim_dispositivo = dim_dispositivo.withColumn("dispositivo_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_dispositivo.count()}")
 
-# ============================================================================
-# TABLA DE HECHOS
-# ============================================================================
 print("\n[11/11] Creando FACT_MEDICIONES...")
 
-# Agregar fecha y hora para joins
 df = df.withColumn("fecha", to_date(col("timestamp"))) \
        .withColumn("hora", hour(col("timestamp")))
 
-# Joins con dimensiones
 fact = df \
     .join(dim_tiempo.select("tiempo_id", "fecha"), "fecha", "left") \
     .join(dim_hora.select("hora_id", "hora"), "hora", "left") \
@@ -237,7 +198,6 @@ fact = df \
     .join(dim_ubicacion.select("ubicacion_id", "sector_id"), "sector_id", "left") \
     .join(dim_dispositivo.select("dispositivo_id", "device_name"), "device_name", "left")
 
-# Seleccionar columnas finales
 fact_mediciones = fact.select(
     monotonically_increasing_id().alias("medicion_id"),
     col("timestamp"),
@@ -258,9 +218,6 @@ fact_mediciones = fact.select(
 
 print(f"   Registros: {fact_mediciones.count():,}")
 
-# ============================================================================
-# EXPORTAR A CSV
-# ============================================================================
 print("\n" + "=" * 80)
 print("EXPORTANDO TABLAS A CSV...")
 print("=" * 80)
@@ -284,12 +241,5 @@ exportar_csv(dim_ubicacion, "DIM_UBICACION")
 exportar_csv(dim_dispositivo, "DIM_DISPOSITIVO")
 exportar_csv(fact_mediciones, "FACT_MEDICIONES")
 
-print("\n" + "=" * 80)
-print("ETL COMPLETADO EXITOSAMENTE")
-print("=" * 80)
-print(f"\nArchivos generados en: {output_dir}/")
-print("- 8 Dimensiones")
-print("- 1 Tabla de Hechos")
-print("\n¡Data Warehouse listo para análisis!")
 
 spark.stop()

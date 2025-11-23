@@ -7,13 +7,10 @@ from folium import plugins
 from streamlit_folium import folium_static
 import numpy as np
 
-# Configuración de página
 st.set_page_config(page_title="Dashboard de Cobertura", layout="wide", initial_sidebar_state="expanded")
 
-# Título principal
 st.title("Dashboard de Análisis de Cobertura Móvil")
 
-# Cargar datos
 @st.cache_data
 def cargar_datos():
     fact = pd.read_csv('output/datawarehouse/FACT_MEDICIONES.csv')
@@ -26,7 +23,6 @@ def cargar_datos():
     dim_ubicacion = pd.read_csv('output/datawarehouse/DIM_UBICACION.csv')
     dim_dispositivo = pd.read_csv('output/datawarehouse/DIM_DISPOSITIVO.csv')
     
-    # Merge completo
     df = fact.merge(dim_tiempo, on='tiempo_id', how='left')
     df = df.merge(dim_hora, on='hora_id', how='left')
     df = df.merge(dim_operador, on='operador_id', how='left')
@@ -43,26 +39,20 @@ with st.spinner('Cargando datos del data warehouse...'):
 
 st.success(f"{len(df):,} mediciones cargadas | {df['device_name'].nunique()} dispositivos | {len(dim_operador)} operadores")
 
-# Sidebar - Filtros
 st.sidebar.header("Filtros")
 
-# Filtro por operador
 operadores = ['Todos'] + sorted(df['operador_normalizado'].dropna().unique().tolist())
 operador_sel = st.sidebar.selectbox("Operador", operadores)
 
-# Filtro por tipo de red
 redes = ['Todas'] + sorted(df['red_normalizada'].dropna().unique().tolist())
 red_sel = st.sidebar.selectbox("Tipo de Red", redes)
 
-# Filtro por calidad
 calidades = ['Todas'] + sorted(df['calidad_senal'].dropna().unique().tolist())
 calidad_sel = st.sidebar.selectbox("Calidad de Señal", calidades)
 
-# Filtro por franja horaria
 franjas = ['Todas'] + sorted(df['franja_horaria'].dropna().unique().tolist())
 franja_sel = st.sidebar.selectbox("Franja Horaria", franjas)
 
-# Aplicar filtros
 df_filtrado = df.copy()
 if operador_sel != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['operador_normalizado'] == operador_sel]
@@ -75,10 +65,8 @@ if franja_sel != 'Todas':
 
 st.sidebar.metric("Registros filtrados", f"{len(df_filtrado):,}")
 
-# Tabs principales
 tab1, tab2, tab3, tab4 = st.tabs(["Resumen", "Mapa de Cobertura", "Análisis Temporal", "Seguimiento"])
 
-# TAB 1: RESUMEN
 with tab1:
     st.header("Resumen General")
     
@@ -97,7 +85,6 @@ with tab1:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Gráfico de barras - Mediciones por operador
         op_counts = df_filtrado['operador_normalizado'].value_counts().reset_index()
         op_counts.columns = ['Operador', 'Mediciones']
         fig = px.bar(op_counts, x='Operador', y='Mediciones', 
@@ -106,7 +93,6 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        # Pie chart - Porcentaje por operador
         fig = px.pie(op_counts, values='Mediciones', names='Operador',
                      title='Porcentaje por Operador')
         st.plotly_chart(fig, use_container_width=True)
@@ -115,7 +101,6 @@ with tab1:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Calidad de señal
         cal_counts = df_filtrado['calidad_senal'].value_counts().reset_index()
         cal_counts.columns = ['Calidad', 'Mediciones']
         colores_calidad = {'EXCELENTE': '#00ff00', 'BUENA': '#99ff33', 'REGULAR': '#ffff00', 
@@ -126,7 +111,6 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        # Señal promedio por operador
         senal_promedio = df_filtrado.groupby('operador_normalizado')['medida_senal'].mean().reset_index()
         senal_promedio.columns = ['Operador', 'Señal Promedio']
         senal_promedio = senal_promedio.sort_values('Señal Promedio', ascending=False)
@@ -137,7 +121,6 @@ with tab1:
         fig.update_layout(yaxis_title='Señal Promedio (dBm)')
         st.plotly_chart(fig, use_container_width=True)
 
-# TAB 2: MAPA DE COBERTURA
 with tab2:
     st.header("Mapa Interactivo de Cobertura")
     
@@ -151,7 +134,6 @@ with tab2:
         limite_puntos = st.slider("Límite de puntos", 100, 10000, 5000, 100)
     
     with col1:
-        # Crear mapa base
         df_mapa = df_filtrado.dropna(subset=['latitude', 'longitude']).head(limite_puntos)
         
         if len(df_mapa) > 0:
@@ -199,17 +181,14 @@ with tab2:
         else:
             st.warning("No hay datos para mostrar en el mapa con los filtros seleccionados")
 
-# TAB 3: ANÁLISIS TEMPORAL
 with tab3:
     st.header("Análisis Temporal")
     
-    # Convertir timestamp a datetime
     df_filtrado['timestamp'] = pd.to_datetime(df_filtrado['timestamp'])
     
     col1, col2 = st.columns(2)
     
     with col1:
-        # Mediciones por día de la semana
         dia_counts = df_filtrado['nombre_dia'].value_counts().reset_index()
         dia_counts.columns = ['Día', 'Mediciones']
         fig = px.bar(dia_counts, x='Día', y='Mediciones',
@@ -217,7 +196,6 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        # Mediciones por franja horaria
         franja_counts = df_filtrado['franja_horaria'].value_counts().reset_index()
         franja_counts.columns = ['Franja', 'Mediciones']
         fig = px.bar(franja_counts, x='Franja', y='Mediciones',
@@ -225,7 +203,6 @@ with tab3:
                      title='Mediciones por Franja Horaria')
         st.plotly_chart(fig, use_container_width=True)
     
-    # Serie temporal de señal promedio
     st.subheader("Evolución de la Señal")
     df_tiempo = df_filtrado.groupby('fecha').agg({
         'medida_senal': 'mean',
@@ -241,7 +218,6 @@ with tab3:
                      xaxis_title='Fecha', yaxis_title='Señal (dBm)')
     st.plotly_chart(fig, use_container_width=True)
     
-    # Heatmap: Día vs Franja Horaria
     st.subheader("Patrón Día-Hora")
     heatmap_data = df_filtrado.groupby(['nombre_dia', 'franja_horaria']).size().reset_index(name='count')
     heatmap_pivot = heatmap_data.pivot(index='nombre_dia', columns='franja_horaria', values='count')
@@ -252,7 +228,6 @@ with tab3:
                     color_continuous_scale='Blues')
     st.plotly_chart(fig, use_container_width=True)
 
-# TAB 4: SEGUIMIENTO DE DISPOSITIVO
 with tab4:
     st.header("Seguimiento de Dispositivo Individual")
     
@@ -273,7 +248,6 @@ with tab4:
     with col4:
         st.metric("Ubicaciones Únicas", df_device['ubicacion_id'].nunique())
     
-    # Mapa de ruta del dispositivo
     st.subheader("Ruta del Dispositivo")
     
     df_device_mapa = df_device.dropna(subset=['latitude', 'longitude'])
@@ -284,11 +258,9 @@ with tab4:
         
         mapa_device = folium.Map(location=[centro_lat, centro_lon], zoom_start=13)
         
-        # Dibujar línea de ruta
         coordenadas = df_device_mapa[['latitude', 'longitude']].values.tolist()
         folium.PolyLine(coordenadas, color='blue', weight=2, opacity=0.7).add_to(mapa_device)
         
-        # Marcar puntos con calidad
         colores_calidad = {'EXCELENTE': 'green', 'BUENA': 'lightgreen', 
                           'REGULAR': 'yellow', 'MALA': 'orange', 'CRITICA': 'red'}
         
@@ -309,7 +281,6 @@ with tab4:
                       f"<b>Velocidad:</b> {row['medida_velocidad']:.2f} km/h"
             ).add_to(mapa_device)
         
-        # Marcar inicio y fin
         folium.Marker(
             coordenadas[0],
             popup="Inicio",
@@ -324,7 +295,6 @@ with tab4:
         
         folium_static(mapa_device, width=900, height=500)
     
-    # Timeline de señal
     st.subheader("Timeline de Señal")
     df_device['timestamp'] = pd.to_datetime(df_device['timestamp'])
     
@@ -339,7 +309,6 @@ with tab4:
                      height=400)
     st.plotly_chart(fig, use_container_width=True)
     
-    # Tabla de detalles
     st.subheader("Registro Detallado")
     columnas_mostrar = ['timestamp', 'operador_normalizado', 'red_normalizada', 
                        'calidad_senal', 'medida_senal', 'medida_velocidad', 
