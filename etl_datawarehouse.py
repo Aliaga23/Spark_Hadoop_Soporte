@@ -244,9 +244,6 @@ fact_mediciones = fact.select(
 
 print(f"   Registros: {fact_mediciones.count():,}")
 
-print("\n" + "=" * 80)
-print("EXPORTANDO TABLAS A CSV...")
-print("=" * 80)
 
 output_dir = "output/datawarehouse"
 os.makedirs(output_dir, exist_ok=True)
