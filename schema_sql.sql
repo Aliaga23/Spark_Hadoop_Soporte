@@ -88,9 +88,3 @@ CREATE TABLE FACT_MEDICIONES (
     FOREIGN KEY (dispositivo_id) REFERENCES DIM_DISPOSITIVO(dispositivo_id),
     FOREIGN KEY (zona_id) REFERENCES DIM_ZONAS(zona_id)
 );
-
-CREATE INDEX idx_fact_timestamp ON FACT_MEDICIONES(timestamp);
-CREATE INDEX idx_fact_tiempo ON FACT_MEDICIONES(tiempo_id);
-CREATE INDEX idx_fact_ubicacion ON FACT_MEDICIONES(ubicacion_id);
-CREATE INDEX idx_fact_operador ON FACT_MEDICIONES(operador_id);
-CREATE INDEX idx_fact_dispositivo ON FACT_MEDICIONES(dispositivo_id);
