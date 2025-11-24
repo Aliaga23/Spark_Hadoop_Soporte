@@ -53,13 +53,9 @@ df = df.withColumn("calidad_senal",
     .otherwise("CRITICA")
 )
 
-df = df.withColumn("categoria_velocidad",
-    when(col("speed") < 1, "ESTATICO")
-    .when(col("speed") < 7, "CAMINANDO")
-    .when(col("speed") < 20, "BICICLETA")
-    .when(col("speed") < 60, "VEHICULO")
-    .otherwise("ALTA_VELOCIDAD")
-)
+grid_size = 0.02
+df = df.withColumn("grid_lat", (col("latitude") / grid_size).cast("integer"))
+df = df.withColumn("grid_lon", (col("longitude") / grid_size).cast("integer"))
 
 df = df.withColumn("zona_altitud",
     when(col("altitude") < 2500, "BAJA")
@@ -147,21 +143,7 @@ dim_calidad = df.select("calidad_senal").distinct() \
 dim_calidad = dim_calidad.withColumn("calidad_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_calidad.count()}")
 
-print("\n[8/9] Creando DIM_VELOCIDAD...")
-dim_velocidad = df.groupBy("categoria_velocidad") \
-    .agg(round(avg("speed"), 2).alias("velocidad_promedio")) \
-    .orderBy(
-        when(col("categoria_velocidad") == "ESTATICO", 1)
-        .when(col("categoria_velocidad") == "CAMINANDO", 2)
-        .when(col("categoria_velocidad") == "BICICLETA", 3)
-        .when(col("categoria_velocidad") == "VEHICULO", 4)
-        .otherwise(5)
-    )
-
-dim_velocidad = dim_velocidad.withColumn("velocidad_id", monotonically_increasing_id() + 1)
-print(f"   Registros: {dim_velocidad.count()}")
-
-print("\n[9/9] Creando DIM_UBICACION...")
+print("\n[8/9] Creando DIM_UBICACION...")
 dim_ubicacion = df.groupBy("sector_id", "zona_altitud") \
     .agg(
         round(avg("latitude"), 6).alias("centro_lat"),
@@ -175,13 +157,57 @@ dim_ubicacion = df.groupBy("sector_id", "zona_altitud") \
 dim_ubicacion = dim_ubicacion.withColumn("ubicacion_id", monotonically_increasing_id() + 1)
 print(f"   Registros (sectores): {dim_ubicacion.count()}")
 
-print("\n[10/9] Creando DIM_DISPOSITIVO...")
+print("\n[9/9] Creando DIM_DISPOSITIVO...")
 dim_dispositivo = df.select("device_name").distinct() \
     .filter(col("device_name").isNotNull()) \
     .orderBy("device_name")
 
 dim_dispositivo = dim_dispositivo.withColumn("dispositivo_id", monotonically_increasing_id() + 1)
 print(f"   Registros: {dim_dispositivo.count()}")
+
+print("\n[10/11] Creando DIM_ZONAS...")
+zonas = df.groupBy("grid_lat", "grid_lon") \
+    .agg(
+        count("*").alias("total_mediciones"),
+        round(avg("latitude"), 6).alias("centro_lat"),
+        round(avg("longitude"), 6).alias("centro_lon"),
+        round(avg("altitude"), 2).alias("altitud_promedio")
+    ) \
+    .orderBy(col("total_mediciones").desc())
+
+zonas = zonas.withColumn("zona_id", monotonically_increasing_id() + 1)
+
+zonas = zonas.withColumn("zona_nombre",
+    concat(
+        lit("ZONA_"),
+        col("zona_id"),
+        lit("_"),
+        when(col("total_mediciones") >= 2000, "ALTA")
+        .when(col("total_mediciones") >= 500, "MEDIA")
+        .otherwise("BAJA")
+    )
+)
+
+zonas = zonas.withColumn("grid_latitud_inicio", col("grid_lat") * grid_size)
+zonas = zonas.withColumn("grid_latitud_fin", (col("grid_lat") + 1) * grid_size)
+zonas = zonas.withColumn("grid_longitud_inicio", col("grid_lon") * grid_size)
+zonas = zonas.withColumn("grid_longitud_fin", (col("grid_lon") + 1) * grid_size)
+
+dim_zonas = zonas.select(
+    "zona_id",
+    "zona_nombre",
+    "centro_lat",
+    "centro_lon",
+    "total_mediciones",
+    "altitud_promedio",
+    "grid_lat",
+    "grid_lon",
+    "grid_latitud_inicio",
+    "grid_latitud_fin",
+    "grid_longitud_inicio",
+    "grid_longitud_fin"
+).orderBy("zona_id")
+print(f"   Registros: {dim_zonas.count()}")
 
 print("\n[11/11] Creando FACT_MEDICIONES...")
 
@@ -194,9 +220,9 @@ fact = df \
     .join(dim_operador.select("operador_id", "operador_normalizado"), "operador_normalizado", "left") \
     .join(dim_red.select("red_id", "red_normalizada"), "red_normalizada", "left") \
     .join(dim_calidad.select("calidad_id", "calidad_senal"), "calidad_senal", "left") \
-    .join(dim_velocidad.select("velocidad_id", "categoria_velocidad"), "categoria_velocidad", "left") \
     .join(dim_ubicacion.select("ubicacion_id", "sector_id"), "sector_id", "left") \
-    .join(dim_dispositivo.select("dispositivo_id", "device_name"), "device_name", "left")
+    .join(dim_dispositivo.select("dispositivo_id", "device_name"), "device_name", "left") \
+    .join(dim_zonas.select("zona_id", "grid_lat", "grid_lon"), ["grid_lat", "grid_lon"], "left")
 
 fact_mediciones = fact.select(
     monotonically_increasing_id().alias("medicion_id"),
@@ -207,8 +233,8 @@ fact_mediciones = fact.select(
     col("operador_id"),
     col("red_id"),
     col("calidad_id"),
-    col("velocidad_id"),
     col("dispositivo_id"),
+    col("zona_id"),
     col("signal").alias("medida_senal"),
     col("speed").alias("medida_velocidad"),
     col("altitude").alias("medida_altitud"),
@@ -236,9 +262,9 @@ exportar_csv(dim_hora, "DIM_HORA")
 exportar_csv(dim_operador, "DIM_OPERADOR")
 exportar_csv(dim_red, "DIM_RED")
 exportar_csv(dim_calidad, "DIM_CALIDAD")
-exportar_csv(dim_velocidad, "DIM_VELOCIDAD")
 exportar_csv(dim_ubicacion, "DIM_UBICACION")
 exportar_csv(dim_dispositivo, "DIM_DISPOSITIVO")
+exportar_csv(dim_zonas, "DIM_ZONAS")
 exportar_csv(fact_mediciones, "FACT_MEDICIONES")
 
 

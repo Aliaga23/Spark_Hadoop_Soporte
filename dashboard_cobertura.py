@@ -19,18 +19,24 @@ def cargar_datos():
     dim_operador = pd.read_csv('output/datawarehouse/DIM_OPERADOR.csv')
     dim_red = pd.read_csv('output/datawarehouse/DIM_RED.csv')
     dim_calidad = pd.read_csv('output/datawarehouse/DIM_CALIDAD.csv')
-    dim_velocidad = pd.read_csv('output/datawarehouse/DIM_VELOCIDAD.csv')
     dim_ubicacion = pd.read_csv('output/datawarehouse/DIM_UBICACION.csv')
     dim_dispositivo = pd.read_csv('output/datawarehouse/DIM_DISPOSITIVO.csv')
+    dim_zonas = pd.read_csv('output/datawarehouse/DIM_ZONAS.csv')
     
     df = fact.merge(dim_tiempo, on='tiempo_id', how='left')
     df = df.merge(dim_hora, on='hora_id', how='left')
     df = df.merge(dim_operador, on='operador_id', how='left')
     df = df.merge(dim_red, on='red_id', how='left')
     df = df.merge(dim_calidad, on='calidad_id', how='left')
-    df = df.merge(dim_velocidad, on='velocidad_id', how='left')
     df = df.merge(dim_ubicacion, on='ubicacion_id', how='left')
     df = df.merge(dim_dispositivo, on='dispositivo_id', how='left')
+    
+    dim_zonas_sel = dim_zonas[['zona_id', 'zona_nombre', 'total_mediciones', 
+                               'grid_latitud_inicio', 'grid_latitud_fin',
+                               'grid_longitud_inicio', 'grid_longitud_fin']].rename(columns={
+        'total_mediciones': 'zona_total_mediciones'
+    })
+    df = df.merge(dim_zonas_sel, on='zona_id', how='left')
     
     return df, dim_operador, dim_red, dim_calidad, dim_dispositivo
 
@@ -70,15 +76,13 @@ tab1, tab2, tab3, tab4 = st.tabs(["Resumen", "Mapa de Cobertura", "Análisis Tem
 with tab1:
     st.header("Resumen General")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric("Señal Promedio", f"{df_filtrado['medida_senal'].mean():.1f} dBm")
     with col2:
-        st.metric("Velocidad Promedio", f"{df_filtrado['medida_velocidad'].mean():.2f} km/h")
-    with col3:
         st.metric("Altitud Promedio", f"{df_filtrado['medida_altitud'].mean():.0f} m")
-    with col4:
+    with col3:
         st.metric("Zonas Cubiertas", f"{df_filtrado['ubicacion_id'].nunique():,}")
     
     st.subheader("Mediciones por Operador")
@@ -90,12 +94,12 @@ with tab1:
         fig = px.bar(op_counts, x='Operador', y='Mediciones', 
                      color='Operador',
                      title='Mediciones por Operador')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         fig = px.pie(op_counts, values='Mediciones', names='Operador',
                      title='Porcentaje por Operador')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     st.subheader("Calidad de Señal")
     col1, col2 = st.columns(2)
@@ -108,7 +112,7 @@ with tab1:
         fig = px.bar(cal_counts, x='Calidad', y='Mediciones',
                      color='Calidad', color_discrete_map=colores_calidad,
                      title='Calidad de Señal')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         senal_promedio = df_filtrado.groupby('operador_normalizado')['medida_senal'].mean().reset_index()
@@ -119,7 +123,7 @@ with tab1:
                      color='Operador',
                      title='Señal Promedio por Operador (dBm)')
         fig.update_layout(yaxis_title='Señal Promedio (dBm)')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 with tab2:
     st.header("Mapa Interactivo de Cobertura")
@@ -129,7 +133,7 @@ with tab2:
     with col2:
         st.subheader("Opciones del Mapa")
         tipo_mapa = st.radio("Tipo de Visualización", 
-                            ["Puntos por Calidad", "Mapa de Calor", "Clusters"])
+                            ["Puntos por Calidad", "Mapa de Calor", "Clusters", "Zonas"])
         
         limite_puntos = st.slider("Límite de puntos", 100, 10000, 5000, 100)
     
@@ -177,6 +181,50 @@ with tab2:
                         icon=folium.Icon(color='blue', icon='signal')
                     ).add_to(marker_cluster)
             
+            elif tipo_mapa == "Zonas":
+                df_con_zona = df_filtrado.dropna(subset=['zona_id'])
+                
+                zonas_filtradas = df_con_zona.groupby('zona_id').agg({
+                    'medicion_id': 'count',
+                    'medida_altitud': 'mean'
+                }).reset_index()
+                zonas_filtradas.columns = ['zona_id', 'total_mediciones', 'altitud_promedio']
+                
+                zonas_info = df_con_zona[['zona_id', 'zona_nombre', 'grid_latitud_inicio', 'grid_latitud_fin',
+                                          'grid_longitud_inicio', 'grid_longitud_fin']].drop_duplicates('zona_id')
+                
+                zonas_filtradas = zonas_filtradas.merge(zonas_info, on='zona_id', how='left')
+                zonas_filtradas['centro_lat'] = (zonas_filtradas['grid_latitud_inicio'] + zonas_filtradas['grid_latitud_fin']) / 2
+                zonas_filtradas['centro_lon'] = (zonas_filtradas['grid_longitud_inicio'] + zonas_filtradas['grid_longitud_fin']) / 2
+                
+                colores_densidad = {
+                    'ALTA': '#ff0000',
+                    'MEDIA': '#ff9900',
+                    'BAJA': '#ffff00'
+                }
+                
+                for _, zona in zonas_filtradas.iterrows():
+                    tipo_zona = zona['zona_nombre'].split('_')[-1]
+                    color = colores_densidad.get(tipo_zona, '#cccccc')
+                    
+                    bounds = [
+                        [zona['grid_latitud_inicio'], zona['grid_longitud_inicio']],
+                        [zona['grid_latitud_fin'], zona['grid_longitud_fin']]
+                    ]
+                    
+                    folium.Rectangle(
+                        bounds=bounds,
+                        color=color,
+                        fill=True,
+                        fillColor=color,
+                        fillOpacity=0.3,
+                        weight=2,
+                        popup=f"<b>{zona['zona_nombre']}</b><br>"
+                              f"Mediciones: {zona['total_mediciones']:,}<br>"
+                              f"Altitud promedio: {zona['altitud_promedio']:.1f} m",
+                        tooltip=f"{zona['zona_nombre']}: {zona['total_mediciones']:,} mediciones"
+                    ).add_to(mapa)
+            
             folium_static(mapa, width=800, height=600)
         else:
             st.warning("No hay datos para mostrar en el mapa con los filtros seleccionados")
@@ -193,7 +241,7 @@ with tab3:
         dia_counts.columns = ['Día', 'Mediciones']
         fig = px.bar(dia_counts, x='Día', y='Mediciones',
                      title='Mediciones por Día de la Semana')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         franja_counts = df_filtrado['franja_horaria'].value_counts().reset_index()
@@ -201,7 +249,7 @@ with tab3:
         fig = px.bar(franja_counts, x='Franja', y='Mediciones',
                      color='Franja',
                      title='Mediciones por Franja Horaria')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     st.subheader("Evolución de la Señal")
     df_tiempo = df_filtrado.groupby('fecha').agg({
@@ -216,7 +264,7 @@ with tab3:
                             line=dict(color='blue', width=2)))
     fig.update_layout(title='Evolución de Señal Promedio por Día',
                      xaxis_title='Fecha', yaxis_title='Señal (dBm)')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     st.subheader("Patrón Día-Hora")
     heatmap_data = df_filtrado.groupby(['nombre_dia', 'franja_horaria']).size().reset_index(name='count')
@@ -226,7 +274,7 @@ with tab3:
                     labels=dict(x="Franja Horaria", y="Día", color="Mediciones"),
                     title="Concentración de Mediciones por Día y Hora",
                     color_continuous_scale='Blues')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 with tab4:
     st.header("Seguimiento de Dispositivo Individual")
@@ -238,14 +286,12 @@ with tab4:
     
     st.subheader(f"Datos del dispositivo: {dispositivo_seleccionado}")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Mediciones", len(df_device))
     with col2:
         st.metric("Señal Promedio", f"{df_device['medida_senal'].mean():.1f} dBm")
     with col3:
-        st.metric("Velocidad Promedio", f"{df_device['medida_velocidad'].mean():.2f} km/h")
-    with col4:
         st.metric("Ubicaciones Únicas", df_device['ubicacion_id'].nunique())
     
     st.subheader("Ruta del Dispositivo")
@@ -277,8 +323,7 @@ with tab4:
                       f"<b>Operador:</b> {row['operador_normalizado']}<br>"
                       f"<b>Red:</b> {row['red_normalizada']}<br>"
                       f"<b>Señal:</b> {row['medida_senal']:.1f} dBm<br>"
-                      f"<b>Calidad:</b> {row['calidad_senal']}<br>"
-                      f"<b>Velocidad:</b> {row['medida_velocidad']:.2f} km/h"
+                      f"<b>Calidad:</b> {row['calidad_senal']}"
             ).add_to(mapa_device)
         
         folium.Marker(
@@ -307,10 +352,10 @@ with tab4:
     fig.update_layout(title=f'Evolución de Señal - {dispositivo_seleccionado}',
                      xaxis_title='Tiempo', yaxis_title='Señal (dBm)',
                      height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     st.subheader("Registro Detallado")
     columnas_mostrar = ['timestamp', 'operador_normalizado', 'red_normalizada', 
-                       'calidad_senal', 'medida_senal', 'medida_velocidad', 
+                       'calidad_senal', 'medida_senal', 
                        'latitude', 'longitude', 'zona_altitud']
-    st.dataframe(df_device[columnas_mostrar].head(100), use_container_width=True)
+    st.dataframe(df_device[columnas_mostrar].head(100), width='stretch')
