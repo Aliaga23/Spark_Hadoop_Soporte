@@ -82,5 +82,6 @@ print("\nEstadísticas:")
 print(f"  Zona con más mediciones: {zonas_pandas['total_mediciones'].max():,}")
 print(f"  Zona con menos mediciones: {zonas_pandas['total_mediciones'].min():,}")
 print(f"  Promedio por zona: {zonas_pandas['total_mediciones'].mean():.0f}")
-
+##  streamlit run dashboard_cobertura.py
+## $env:HADOOP_HOME = "C:\hadoop"; python etl_datawarehouse.py
 spark.stop()

@@ -10,7 +10,6 @@ result['num_ids'] = result['device_id'].apply(len)
 duplicados = result[result['num_ids'] > 1]
 
 print("Dispositivos con múltiples device_id:")
-print("=" * 60)
 if len(duplicados) > 0:
     for _, row in duplicados.iterrows():
         print(f"\n{row['device_name']}: {row['device_id']}")
