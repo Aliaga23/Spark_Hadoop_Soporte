@@ -6,160 +6,28 @@ import folium
 from folium import plugins
 from streamlit_folium import folium_static
 import numpy as np
+import json
 
 st.set_page_config(page_title="Dashboard de Cobertura", layout="wide", initial_sidebar_state="expanded")
 
-# Definición de provincias y distritos de Santa Cruz de la Sierra
-DISTRITOS_SANTA_CRUZ = {
-    'Distrito 1': {
-        'coords': [[-17.7633, -63.1816], [-17.7633, -63.1516], [-17.7833, -63.1516], [-17.7833, -63.1816]],
-        'color': '#FF6B6B',
-        'centro': [-17.7733, -63.1666]
-    },
-    'Distrito 2': {
-        'coords': [[-17.7633, -63.1516], [-17.7633, -63.1216], [-17.7833, -63.1216], [-17.7833, -63.1516]],
-        'color': '#4ECDC4',
-        'centro': [-17.7733, -63.1366]
-    },
-    'Distrito 3': {
-        'coords': [[-17.7833, -63.1816], [-17.7833, -63.1516], [-17.8033, -63.1516], [-17.8033, -63.1816]],
-        'color': '#45B7D1',
-        'centro': [-17.7933, -63.1666]
-    },
-    'Distrito 4': {
-        'coords': [[-17.7833, -63.1516], [-17.7833, -63.1216], [-17.8033, -63.1216], [-17.8033, -63.1516]],
-        'color': '#FFA07A',
-        'centro': [-17.7933, -63.1366]
-    },
-    'Distrito 5': {
-        'coords': [[-17.7433, -63.1816], [-17.7433, -63.1516], [-17.7633, -63.1516], [-17.7633, -63.1816]],
-        'color': '#98D8C8',
-        'centro': [-17.7533, -63.1666]
-    },
-    'Distrito 6': {
-        'coords': [[-17.7433, -63.1516], [-17.7433, -63.1216], [-17.7633, -63.1216], [-17.7633, -63.1516]],
-        'color': '#F7DC6F',
-        'centro': [-17.7533, -63.1366]
-    },
-    'Distrito 7': {
-        'coords': [[-17.8033, -63.1816], [-17.8033, -63.1516], [-17.8233, -63.1516], [-17.8233, -63.1816]],
-        'color': '#BB8FCE',
-        'centro': [-17.8133, -63.1666]
-    },
-    'Distrito 8': {
-        'coords': [[-17.8033, -63.1516], [-17.8033, -63.1216], [-17.8233, -63.1216], [-17.8233, -63.1516]],
-        'color': '#85C1E2',
-        'centro': [-17.8133, -63.1366]
-    },
-    'Distrito 9': {
-        'coords': [[-17.7233, -63.1816], [-17.7233, -63.1516], [-17.7433, -63.1516], [-17.7433, -63.1816]],
-        'color': '#F8B739',
-        'centro': [-17.7333, -63.1666]
-    },
-    'Distrito 10': {
-        'coords': [[-17.7233, -63.1516], [-17.7233, -63.1216], [-17.7433, -63.1216], [-17.7433, -63.1516]],
-        'color': '#EC7063',
-        'centro': [-17.7333, -63.1366]
-    },
-    'Distrito 11': {
-        'coords': [[-17.8233, -63.1816], [-17.8233, -63.1516], [-17.8433, -63.1516], [-17.8433, -63.1816]],
-        'color': '#52BE80',
-        'centro': [-17.8333, -63.1666]
-    },
-    'Distrito 12': {
-        'coords': [[-17.8233, -63.1516], [-17.8233, -63.1216], [-17.8433, -63.1216], [-17.8433, -63.1516]],
-        'color': '#AF7AC5',
-        'centro': [-17.8333, -63.1366]
-    },
-    'Distrito 13': {
-        'coords': [[-17.7033, -63.1816], [-17.7033, -63.1516], [-17.7233, -63.1516], [-17.7233, -63.1816]],
-        'color': '#5DADE2',
-        'centro': [-17.7133, -63.1666]
-    },
-    'Distrito 14': {
-        'coords': [[-17.7033, -63.1516], [-17.7033, -63.1216], [-17.7233, -63.1216], [-17.7233, -63.1516]],
-        'color': '#48C9B0',
-        'centro': [-17.7133, -63.1366]
+@st.cache_data
+def cargar_geojson():
+    with open('gadm41_BOL_3.json', 'r', encoding='utf-8') as f:
+        geojson_municipios = json.load(f)
+    
+    with open('distrito_municipal_santacruz.json', 'r', encoding='utf-8') as f:
+        geojson_distritos = json.load(f)
+    
+    santa_cruz_municipios = {
+        'type': 'FeatureCollection',
+        'features': []
     }
-}
-
-PROVINCIAS_SANTA_CRUZ = {
-    'Andrés Ibáñez': {
-        'coords': [[-17.65, -63.25], [-17.65, -63.05], [-17.85, -63.05], [-17.85, -63.25]],
-        'color': '#E74C3C',
-        'centro': [-17.75, -63.15]
-    },
-    'Warnes': {
-        'coords': [[-17.45, -63.25], [-17.45, -63.05], [-17.65, -63.05], [-17.65, -63.25]],
-        'color': '#3498DB',
-        'centro': [-17.55, -63.15]
-    },
-    'Sara': {
-        'coords': [[-17.25, -63.25], [-17.25, -63.05], [-17.45, -63.05], [-17.45, -63.25]],
-        'color': '#2ECC71',
-        'centro': [-17.35, -63.15]
-    },
-    'Montero': {
-        'coords': [[-17.25, -63.45], [-17.25, -63.25], [-17.45, -63.25], [-17.45, -63.45]],
-        'color': '#F39C12',
-        'centro': [-17.35, -63.35]
-    },
-    'Obispo Santistevan': {
-        'coords': [[-17.45, -63.45], [-17.45, -63.25], [-17.65, -63.25], [-17.65, -63.45]],
-        'color': '#9B59B6',
-        'centro': [-17.55, -63.35]
-    },
-    'Ñuflo de Chávez': {
-        'coords': [[-17.05, -63.25], [-17.05, -63.05], [-17.25, -63.05], [-17.25, -63.25]],
-        'color': '#1ABC9C',
-        'centro': [-17.15, -63.15]
-    },
-    'Ichilo': {
-        'coords': [[-17.05, -63.45], [-17.05, -63.25], [-17.25, -63.25], [-17.25, -63.45]],
-        'color': '#E67E22',
-        'centro': [-17.15, -63.35]
-    },
-    'Chiquitos': {
-        'coords': [[-17.65, -63.05], [-17.65, -62.85], [-17.85, -62.85], [-17.85, -63.05]],
-        'color': '#34495E',
-        'centro': [-17.75, -62.95]
-    },
-    'Germán Busch': {
-        'coords': [[-17.85, -63.25], [-17.85, -63.05], [-18.05, -63.05], [-18.05, -63.25]],
-        'color': '#16A085',
-        'centro': [-17.95, -63.15]
-    },
-    'Cordillera': {
-        'coords': [[-17.85, -63.05], [-17.85, -62.85], [-18.05, -62.85], [-18.05, -63.05]],
-        'color': '#27AE60',
-        'centro': [-17.95, -62.95]
-    },
-    'Vallegrande': {
-        'coords': [[-18.05, -63.25], [-18.05, -63.05], [-18.25, -63.05], [-18.25, -63.25]],
-        'color': '#2980B9',
-        'centro': [-18.15, -63.15]
-    },
-    'Florida': {
-        'coords': [[-18.05, -63.05], [-18.05, -62.85], [-18.25, -62.85], [-18.25, -63.05]],
-        'color': '#8E44AD',
-        'centro': [-18.15, -62.95]
-    },
-    'Caballero': {
-        'coords': [[-17.25, -63.05], [-17.25, -62.85], [-17.45, -62.85], [-17.45, -63.05]],
-        'color': '#C0392B',
-        'centro': [-17.35, -62.95]
-    },
-    'Guarayos': {
-        'coords': [[-17.45, -63.05], [-17.45, -62.85], [-17.65, -62.85], [-17.65, -63.05]],
-        'color': '#D35400',
-        'centro': [-17.55, -62.95]
-    },
-    'Ángel Sandoval': {
-        'coords': [[-17.05, -63.05], [-17.05, -62.85], [-17.25, -62.85], [-17.25, -63.05]],
-        'color': '#7D3C98',
-        'centro': [-17.15, -62.95]
-    }
-}
+    
+    for feature in geojson_municipios['features']:
+        if feature['properties'].get('NAME_1') == 'SantaCruz':
+            santa_cruz_municipios['features'].append(feature)
+    
+    return santa_cruz_municipios, geojson_distritos
 
 st.title("Dashboard de Análisis de Cobertura Móvil")
 
@@ -288,8 +156,8 @@ with tab2:
                             ["Puntos por Calidad", "Mapa de Calor", "Clusters", "Zonas"])
         
         st.subheader("Capas Base")
+        mostrar_municipios = st.checkbox("Mostrar Municipios Santa Cruz", value=False)
         mostrar_distritos = st.checkbox("Mostrar Distritos Santa Cruz", value=True)
-        mostrar_provincias = st.checkbox("Mostrar Provincias Santa Cruz", value=True)
         
         limite_puntos = st.slider("Límite de puntos", 100, 10000, 5000, 100)
     
@@ -302,56 +170,42 @@ with tab2:
             
             mapa = folium.Map(location=[centro_lat, centro_lon], zoom_start=12, tiles='OpenStreetMap')
             
-            # Agregar provincias como capa base
-            if mostrar_provincias:
-                for nombre, info in PROVINCIAS_SANTA_CRUZ.items():
-                    coords_polygon = info['coords'] + [info['coords'][0]]  # Cerrar el polígono
-                    
-                    folium.Polygon(
-                        locations=coords_polygon,
-                        color=info['color'],
-                        weight=3,
-                        fill=True,
-                        fillColor=info['color'],
-                        fillOpacity=0.15,
-                        popup=f"<b>Provincia: {nombre}</b>",
-                        tooltip=nombre
-                    ).add_to(mapa)
-                    
-                    # Agregar etiqueta con el nombre
-                    folium.Marker(
-                        location=info['centro'],
-                        icon=folium.DivIcon(html=f"""
-                            <div style="font-size: 10pt; color: {info['color']}; 
-                                        font-weight: bold; text-shadow: 1px 1px 1px white;">
-                                {nombre}
-                            </div>""")
-                    ).add_to(mapa)
+            municipios_geojson, distritos_geojson = cargar_geojson()
             
-            # Agregar distritos como capa base
+            colores_municipios = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+                                 '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#EC7063',
+                                 '#52BE80', '#AF7AC5', '#5DADE2', '#48C9B0', '#F39C12',
+                                 '#E8DAEF', '#FADBD8', '#D5F4E6', '#FCF3CF', '#EBDEF0']
+            
+            colores_distritos = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6', 
+                                '#1ABC9C', '#E67E22', '#34495E', '#16A085', '#27AE60',
+                                '#2980B9', '#8E44AD', '#C0392B', '#D35400']
+            
+            if mostrar_municipios:
+                folium.GeoJson(
+                    municipios_geojson,
+                    style_function=lambda feature: {
+                        'fillColor': colores_municipios[municipios_geojson['features'].index(feature) % len(colores_municipios)],
+                        'color': colores_municipios[municipios_geojson['features'].index(feature) % len(colores_municipios)],
+                        'weight': 1,
+                        'fillOpacity': 0.25
+                    },
+                    tooltip=folium.GeoJsonTooltip(fields=['NAME_3'], aliases=[''], localize=False, sticky=False)
+                ).add_to(mapa)
+            
             if mostrar_distritos:
-                for nombre, info in DISTRITOS_SANTA_CRUZ.items():
-                    coords_polygon = info['coords'] + [info['coords'][0]]  # Cerrar el polígono
-                    
-                    folium.Polygon(
-                        locations=coords_polygon,
-                        color=info['color'],
-                        weight=2,
-                        fill=True,
-                        fillColor=info['color'],
-                        fillOpacity=0.2,
-                        popup=f"<b>{nombre}</b>",
-                        tooltip=nombre
-                    ).add_to(mapa)
-                    
-                    # Agregar etiqueta con el nombre
-                    folium.Marker(
-                        location=info['centro'],
-                        icon=folium.DivIcon(html=f"""
-                            <div style="font-size: 9pt; color: {info['color']}; 
-                                        font-weight: bold; text-shadow: 1px 1px 1px white;">
-                                {nombre}
-                            </div>""")
+                for idx, feature in enumerate(distritos_geojson['features']):
+                    color = colores_distritos[idx % len(colores_distritos)]
+                    nombre_campo = 'DISTRITO' if 'DISTRITO' in feature['properties'] else list(feature['properties'].keys())[0]
+                    folium.GeoJson(
+                        feature,
+                        style_function=lambda x, color=color: {
+                            'fillColor': color,
+                            'color': color,
+                            'weight': 2,
+                            'fillOpacity': 0.3
+                        },
+                        tooltip=str(feature['properties'].get(nombre_campo, f'Distrito {idx+1}'))
                     ).add_to(mapa)
             
             if tipo_mapa == "Puntos por Calidad":
