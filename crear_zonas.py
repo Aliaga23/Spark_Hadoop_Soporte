@@ -2,6 +2,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.window import Window
 import os
+from supabase import create_client, Client
+import pandas as pd
 
 spark = SparkSession.builder \
     .appName("Crear Zonas por Densidad") \
@@ -9,10 +11,30 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 print("=" * 80)
-print("CREANDO ZONAS GEOGRAFICAS POR DENSIDAD")
+print("CREANDO ZONAS GEOGRAFICAS POR DENSIDAD - DESDE SUPABASE")
 print("=" * 80)
 
-df = spark.read.csv("locations_rows.csv", header=True, inferSchema=True)
+# Configuración Supabase
+url = "https://lmqpbtuljodwklxdixjq.supabase.co"
+key = "sb_publishable_JeXh7gEgHiVx1LQBCcFidA_Ki0ARx4F"
+
+try:
+    print("\nConectando a Supabase y cargando datos...")
+    supabase: Client = create_client(url, key)
+    
+    # Extraer datos de la tabla locations
+    response = supabase.table('locations').select('*').execute()
+    df_pandas = pd.DataFrame(response.data)
+    print(f"Datos cargados desde Supabase: {len(df_pandas):,} registros")
+    
+    # Convertir a Spark DataFrame
+    df = spark.createDataFrame(df_pandas)
+    print(f"DataFrame Spark creado: {df.count():,}")
+
+except Exception as e:
+    print(f"Error conectando a Supabase: {str(e)}")
+    spark.stop()
+    exit(1)
 
 df = df.filter(
     col("latitude").isNotNull() & 
@@ -82,6 +104,6 @@ print("\nEstadísticas:")
 print(f"  Zona con más mediciones: {zonas_pandas['total_mediciones'].max():,}")
 print(f"  Zona con menos mediciones: {zonas_pandas['total_mediciones'].min():,}")
 print(f"  Promedio por zona: {zonas_pandas['total_mediciones'].mean():.0f}")
-##  streamlit run dashboard_cobertura.py
+##  streamlit rusn dashboard_cobertura.py
 ## $env:HADOOP_HOME = "C:\hadoop"; python etl_datawarehouse.py
 spark.stop()

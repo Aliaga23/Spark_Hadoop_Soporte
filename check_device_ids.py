@@ -1,6 +1,23 @@
 import pandas as pd
+from supabase import create_client, Client
 
-df = pd.read_csv('locations_rows.csv')
+# Configuración Supabase
+url = "https://lmqpbtuljodwklxdixjq.supabase.co"
+key = "sb_publishable_JeXh7gEgHiVx1LQBCcFidA_Ki0ARx4F"
+
+try:
+    # Conectar a Supabase y cargar datos
+    supabase: Client = create_client(url, key)
+    print("Conectando a Supabase...")
+    
+    # Extraer datos de la tabla locations
+    response = supabase.table('locations').select('device_id, device_name').execute()
+    df = pd.DataFrame(response.data)
+    print(f"Datos cargados: {len(df):,} registros")
+
+except Exception as e:
+    print(f"Error conectando a Supabase: {str(e)}")
+    exit(1)
 
 df_devices = df[['device_id', 'device_name']].drop_duplicates().dropna(subset=['device_id'])
 

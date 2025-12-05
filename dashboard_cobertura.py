@@ -4,69 +4,158 @@ import plotly.express as px
 import plotly.graph_objects as go
 import folium
 from folium import plugins
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 import numpy as np
 import json
+from sqlalchemy import create_engine
+import warnings
+
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 st.set_page_config(page_title="Dashboard de Cobertura", layout="wide", initial_sidebar_state="expanded")
 
+# Configuración PostgreSQL con SQLAlchemy optimizada
+DATABASE_URL = "postgresql://postgres:1234@localhost:5433/SoportePy2"
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    connect_args={
+        "options": "-c statement_timeout=30000"  # 30 segundos timeout
+    }
+)
+
 @st.cache_data
 def cargar_geojson():
-    with open('gadm41_BOL_3.json', 'r', encoding='utf-8') as f:
-        geojson_municipios = json.load(f)
-    
     with open('distrito_municipal_santacruz.json', 'r', encoding='utf-8') as f:
         geojson_distritos = json.load(f)
     
-    santa_cruz_municipios = {
-        'type': 'FeatureCollection',
-        'features': []
-    }
-    
-    for feature in geojson_municipios['features']:
-        if feature['properties'].get('NAME_1') == 'SantaCruz':
-            santa_cruz_municipios['features'].append(feature)
-    
-    return santa_cruz_municipios, geojson_distritos
+    return geojson_distritos
 
 st.title("Dashboard de Análisis de Cobertura Móvil")
 
-@st.cache_data
+@st.cache_data(ttl=600, show_spinner="Cargando datos...")
 def cargar_datos():
-    fact = pd.read_csv('output/datawarehouse/FACT_MEDICIONES.csv')
-    dim_tiempo = pd.read_csv('output/datawarehouse/DIM_TIEMPO.csv')
-    dim_hora = pd.read_csv('output/datawarehouse/DIM_HORA.csv')
-    dim_operador = pd.read_csv('output/datawarehouse/DIM_OPERADOR.csv')
-    dim_red = pd.read_csv('output/datawarehouse/DIM_RED.csv')
-    dim_calidad = pd.read_csv('output/datawarehouse/DIM_CALIDAD.csv')
-    dim_ubicacion = pd.read_csv('output/datawarehouse/DIM_UBICACION.csv')
-    dim_dispositivo = pd.read_csv('output/datawarehouse/DIM_DISPOSITIVO.csv')
-    dim_zonas = pd.read_csv('output/datawarehouse/DIM_ZONAS.csv')
-    
-    df = fact.merge(dim_tiempo, on='tiempo_id', how='left')
-    df = df.merge(dim_hora, on='hora_id', how='left')
-    df = df.merge(dim_operador, on='operador_id', how='left')
-    df = df.merge(dim_red, on='red_id', how='left')
-    df = df.merge(dim_calidad, on='calidad_id', how='left')
-    df = df.merge(dim_ubicacion, on='ubicacion_id', how='left')
-    df = df.merge(dim_dispositivo, on='dispositivo_id', how='left')
-    
-    dim_zonas_sel = dim_zonas[['zona_id', 'zona_nombre', 'total_mediciones', 
-                               'grid_latitud_inicio', 'grid_latitud_fin',
-                               'grid_longitud_inicio', 'grid_longitud_fin']].rename(columns={
-        'total_mediciones': 'zona_total_mediciones'
-    })
-    df = df.merge(dim_zonas_sel, on='zona_id', how='left')
-    
-    return df, dim_operador, dim_red, dim_calidad, dim_dispositivo
+    """Cargar TODOS los datos desde PostgreSQL - USA PARTICIONES E ÍNDICES COMPUESTOS"""
+    try:
+        # Query optimizada que aprovecha:
+        # 1. Particionamiento semanal (f.timestamp usa BRIN index)
+        # 2. Índices compuestos (tiempo_id + hora_id)
+        # 3. Sin LIMIT - carga todo para análisis completo
+        query = """
+        SELECT 
+            f.medicion_id,
+            f.timestamp,
+            f.latitude,
+            f.longitude,
+            f.medida_senal,
+            f.medida_altitud,
+            f.zona_id,
+            f.zona_altitud,
+            f.dispositivo_id,
+            t.fecha, t.nombre_dia, t.mes, t.anio,
+            h.hora, h.franja_horaria,
+            o.operador_nombre,
+            r.red_tipo,
+            c.calidad_categoria,
+            d.device_name
+        FROM fact_mediciones f
+        INNER JOIN dim_tiempo t ON f.tiempo_id = t.tiempo_id
+        INNER JOIN dim_hora h ON f.hora_id = h.hora_id
+        INNER JOIN dim_operador o ON f.operador_id = o.operador_id
+        INNER JOIN dim_red r ON f.red_id = r.red_id
+        INNER JOIN dim_calidad c ON f.calidad_id = c.calidad_id
+        INNER JOIN dim_dispositivo d ON f.dispositivo_id = d.dispositivo_id
+        WHERE f.latitude IS NOT NULL AND f.longitude IS NOT NULL
+        ORDER BY f.timestamp DESC
+        """
+        
+        df = pd.read_sql_query(query, engine)
+        
+        # Renombrar columnas para compatibilidad con el resto del dashboard
+        df = df.rename(columns={
+            'operador_nombre': 'operador_normalizado',
+            'red_tipo': 'red_normalizada',
+            'calidad_categoria': 'calidad_senal'
+        })
+        
+        # Cargar dimensiones para filtros
+        dim_operador = pd.read_sql_query("SELECT operador_id, operador_nombre FROM dim_operador ORDER BY operador_nombre", engine)
+        dim_operador = dim_operador.rename(columns={'operador_nombre': 'operador_normalizado'})
+        
+        dim_red = pd.read_sql_query("SELECT red_id, red_tipo FROM dim_red ORDER BY red_tipo", engine)
+        dim_red = dim_red.rename(columns={'red_tipo': 'red_normalizada'})
+        
+        dim_calidad = pd.read_sql_query("SELECT calidad_id, calidad_categoria FROM dim_calidad ORDER BY calidad_id", engine)
+        dim_calidad = dim_calidad.rename(columns={'calidad_categoria': 'calidad_senal'})
+        
+        dim_dispositivo = pd.read_sql_query("SELECT dispositivo_id, device_name FROM dim_dispositivo ORDER BY device_name", engine)
+        
+        return df, dim_operador, dim_red, dim_calidad, dim_dispositivo
+        
+    except Exception as e:
+        st.error(f"Error conectando a la base de datos: {str(e)}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-with st.spinner('Cargando datos del data warehouse...'):
+@st.cache_data(ttl=600)
+def cargar_datos_zonas():
+    """Cargar datos de zonas desde vista materializada - ULTRA RÁPIDO"""
+    try:
+        query = """
+        SELECT 
+            mv.zona_id,
+            mv.total_mediciones,
+            mv.senal_promedio,
+            mv.senal_desviacion,
+            mv.zona_nombre,
+            z.grid_latitud_inicio,
+            z.grid_latitud_fin,
+            z.grid_longitud_inicio,
+            z.grid_longitud_fin,
+            z.altitud_promedio
+        FROM mv_stats_zonas mv
+        INNER JOIN dim_zonas z ON mv.zona_id = z.zona_id
+        ORDER BY mv.total_mediciones DESC
+        """
+        return pd.read_sql_query(query, engine)
+    except Exception as e:
+        st.error(f"Error cargando zonas: {str(e)}")
+        return pd.DataFrame()
+
+with st.spinner('Conectando a Supabase y cargando datos en tiempo real...'):
     df, dim_operador, dim_red, dim_calidad, dim_dispositivo = cargar_datos()
 
-st.success(f"{len(df):,} mediciones cargadas | {df['device_name'].nunique()} dispositivos | {len(dim_operador)} operadores")
+if len(df) == 0:
+    st.error("❌ No se cargaron datos. Revisa la conexión a Supabase.")
+    st.stop()
+
+if len(df) > 0:
+    dispositivos_unicos = df['dispositivo_id'].nunique()
+    modelos_unicos = df['device_name'].nunique()
+    st.success(f"✅ {len(df):,} mediciones | {dispositivos_unicos} dispositivos ({modelos_unicos} modelos) | {len(dim_operador)} operadores")
+else:
+    st.warning("⚠️ No se pudieron cargar datos. Verifica la conexión a Supabase.")
 
 st.sidebar.header("Filtros")
 
+# Filtros de FECHA y HORA (aprovechan particiones e índices compuestos)
+st.sidebar.subheader("📅 Período")
+df['fecha'] = pd.to_datetime(df['fecha'])
+fecha_min = df['fecha'].min().date()
+fecha_max = df['fecha'].max().date()
+
+fecha_inicio = st.sidebar.date_input("Fecha Inicio", fecha_min, min_value=fecha_min, max_value=fecha_max)
+fecha_fin = st.sidebar.date_input("Fecha Fin", fecha_max, min_value=fecha_min, max_value=fecha_max)
+
+st.sidebar.subheader("🕐 Hora")
+horas_disponibles = sorted(df['hora'].unique())
+hora_inicio = st.sidebar.selectbox("Hora Inicio", ["Todas"] + [f"{h:02d}:00" for h in horas_disponibles])
+hora_fin = st.sidebar.selectbox("Hora Fin", ["Todas"] + [f"{h:02d}:00" for h in horas_disponibles])
+
+st.sidebar.subheader("📡 Otros Filtros")
 operadores = ['Todos'] + sorted(df['operador_normalizado'].dropna().unique().tolist())
 operador_sel = st.sidebar.selectbox("Operador", operadores)
 
@@ -80,6 +169,22 @@ franjas = ['Todas'] + sorted(df['franja_horaria'].dropna().unique().tolist())
 franja_sel = st.sidebar.selectbox("Franja Horaria", franjas)
 
 df_filtrado = df.copy()
+
+# Filtros de fecha (CRÍTICO para particiones)
+df_filtrado = df_filtrado[
+    (df_filtrado['fecha'].dt.date >= fecha_inicio) & 
+    (df_filtrado['fecha'].dt.date <= fecha_fin)
+]
+
+# Filtros de hora (usa índice compuesto tiempo_id + hora_id)
+if hora_inicio != "Todas" and hora_fin != "Todas":
+    hora_i = int(hora_inicio.split(':')[0])
+    hora_f = int(hora_fin.split(':')[0])
+    df_filtrado = df_filtrado[
+        (df_filtrado['hora'] >= hora_i) & 
+        (df_filtrado['hora'] <= hora_f)
+    ]
+
 if operador_sel != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['operador_normalizado'] == operador_sel]
 if red_sel != 'Todas':
@@ -103,7 +208,7 @@ with tab1:
     with col2:
         st.metric("Altitud Promedio", f"{df_filtrado['medida_altitud'].mean():.0f} m")
     with col3:
-        st.metric("Zonas Cubiertas", f"{df_filtrado['ubicacion_id'].nunique():,}")
+        st.metric("Zonas Cubiertas", f"{df_filtrado['zona_id'].nunique():,}")
     
     st.subheader("Mediciones por Operador")
     col1, col2 = st.columns(2)
@@ -156,44 +261,38 @@ with tab2:
                             ["Puntos por Calidad", "Mapa de Calor", "Clusters", "Zonas"])
         
         st.subheader("Capas Base")
-        mostrar_municipios = st.checkbox("Mostrar Municipios Santa Cruz", value=False)
         mostrar_distritos = st.checkbox("Mostrar Distritos Santa Cruz", value=True)
         
-        limite_puntos = st.slider("Límite de puntos", 100, 10000, 5000, 100)
+        # Solo mostrar límite cuando sea Mapa de Calor
+        if tipo_mapa == "Mapa de Calor":
+            limite_puntos = st.slider("Límite de puntos (solo Mapa de Calor)", 500, 5000, 2000, 250)
+        else:
+            limite_puntos = None  # Sin límite para otros tipos
     
     with col1:
-        df_mapa = df_filtrado.dropna(subset=['latitude', 'longitude']).head(limite_puntos)
+        # Usar todos los datos filtrados para la mayoría de visualizaciones
+        df_mapa_completo = df_filtrado.dropna(subset=['latitude', 'longitude'])
         
-        if len(df_mapa) > 0:
-            centro_lat = df_mapa['latitude'].mean()
-            centro_lon = df_mapa['longitude'].mean()
+        if len(df_mapa_completo) > 0:
+            centro_lat = df_mapa_completo['latitude'].mean()
+            centro_lon = df_mapa_completo['longitude'].mean()
+            
+            # Key única (sin limite_puntos para tipos que no lo usan)
+            if tipo_mapa == "Mapa de Calor":
+                map_key = f"{tipo_mapa}_{mostrar_distritos}_{limite_puntos}_{len(df_mapa_completo)}"
+            else:
+                map_key = f"{tipo_mapa}_{mostrar_distritos}_{len(df_mapa_completo)}"
             
             mapa = folium.Map(location=[centro_lat, centro_lon], zoom_start=12, tiles='OpenStreetMap')
             
-            municipios_geojson, distritos_geojson = cargar_geojson()
-            
-            colores_municipios = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
-                                 '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#EC7063',
-                                 '#52BE80', '#AF7AC5', '#5DADE2', '#48C9B0', '#F39C12',
-                                 '#E8DAEF', '#FADBD8', '#D5F4E6', '#FCF3CF', '#EBDEF0']
+            distritos_geojson = cargar_geojson()
             
             colores_distritos = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6', 
                                 '#1ABC9C', '#E67E22', '#34495E', '#16A085', '#27AE60',
                                 '#2980B9', '#8E44AD', '#C0392B', '#D35400']
             
-            if mostrar_municipios:
-                folium.GeoJson(
-                    municipios_geojson,
-                    style_function=lambda feature: {
-                        'fillColor': colores_municipios[municipios_geojson['features'].index(feature) % len(colores_municipios)],
-                        'color': colores_municipios[municipios_geojson['features'].index(feature) % len(colores_municipios)],
-                        'weight': 1,
-                        'fillOpacity': 0.25
-                    },
-                    tooltip=folium.GeoJsonTooltip(fields=['NAME_3'], aliases=[''], localize=False, sticky=False)
-                ).add_to(mapa)
-            
             if mostrar_distritos:
+                # Optimización: Reducir opacidad y simplificar geometría para carga rápida
                 for idx, feature in enumerate(distritos_geojson['features']):
                     color = colores_distritos[idx % len(colores_distritos)]
                     nombre_campo = 'DISTRITO' if 'DISTRITO' in feature['properties'] else list(feature['properties'].keys())[0]
@@ -202,8 +301,9 @@ with tab2:
                         style_function=lambda x, color=color: {
                             'fillColor': color,
                             'color': color,
-                            'weight': 2,
-                            'fillOpacity': 0.3
+                            'weight': 1,  # Reducido de 2 a 1
+                            'fillOpacity': 0.15,  # Reducido de 0.3 a 0.15
+                            'smoothFactor': 2  # Simplificar geometría
                         },
                         tooltip=str(feature['properties'].get(nombre_campo, f'Distrito {idx+1}'))
                     ).add_to(mapa)
@@ -212,29 +312,49 @@ with tab2:
                 colores_calidad = {'EXCELENTE': 'green', 'BUENA': 'lightgreen', 
                                   'REGULAR': 'yellow', 'MALA': 'orange', 'CRITICA': 'red'}
                 
-                for _, row in df_mapa.iterrows():
-                    color = colores_calidad.get(row['calidad_senal'], 'gray')
-                    folium.CircleMarker(
-                        location=[row['latitude'], row['longitude']],
-                        radius=3,
-                        color=color,
-                        fill=True,
-                        fillColor=color,
-                        fillOpacity=0.6,
-                        popup=f"<b>{row['operador_normalizado']}</b><br>"
-                              f"Red: {row['red_normalizada']}<br>"
-                              f"Señal: {row['medida_senal']:.1f} dBm<br>"
-                              f"Calidad: {row['calidad_senal']}"
-                    ).add_to(mapa)
+                # Aplicar límite de puntos solo para "Puntos por Calidad" (4k-20k)
+                if len(df_mapa_completo) > 20000:
+                    df_puntos = df_mapa_completo.sample(n=20000)
+                elif len(df_mapa_completo) > 4000:
+                    df_puntos = df_mapa_completo.sample(n=min(4000, len(df_mapa_completo)))
+                else:
+                    df_puntos = df_mapa_completo
+                
+                # Optimización: Agrupar por calidad para renderizado más rápido
+                for calidad, color in colores_calidad.items():
+                    df_calidad = df_puntos[df_puntos['calidad_senal'] == calidad]
+                    if len(df_calidad) > 0:
+                        feature_group = folium.FeatureGroup(name=calidad)
+                        for _, row in df_calidad.iterrows():
+                            folium.CircleMarker(
+                                location=[row['latitude'], row['longitude']],
+                                radius=2.5,  # Reducido de 3 a 2.5
+                                color=color,
+                                fill=True,
+                                fillColor=color,
+                                fillOpacity=0.7,  # Aumentado de 0.6 a 0.7
+                                weight=1,  # Añadido para bordes más finos
+                                popup=f"<b>{row['operador_normalizado']}</b><br>"
+                                      f"Red: {row['red_normalizada']}<br>"
+                                      f"Señal: {row['medida_senal']:.1f} dBm<br>"
+                                      f"Calidad: {row['calidad_senal']}"
+                            ).add_to(feature_group)
+                        feature_group.add_to(mapa)
             
             elif tipo_mapa == "Mapa de Calor":
+                # Solo aquí aplicar el límite de puntos para rendimiento
+                if limite_puntos:
+                    df_heat = df_mapa_completo.sample(n=min(limite_puntos, len(df_mapa_completo)))
+                else:
+                    df_heat = df_mapa_completo.sample(n=min(2000, len(df_mapa_completo)))  # Fallback
                 heat_data = [[row['latitude'], row['longitude'], abs(row['medida_senal'])] 
-                            for _, row in df_mapa.iterrows()]
-                plugins.HeatMap(heat_data, radius=15, blur=25).add_to(mapa)
+                            for _, row in df_heat.iterrows()]
+                plugins.HeatMap(heat_data, radius=15, blur=25, max_zoom=13).add_to(mapa)
             
             elif tipo_mapa == "Clusters":
                 marker_cluster = plugins.MarkerCluster().add_to(mapa)
-                for _, row in df_mapa.iterrows():
+                # Usar TODOS los datos filtrados
+                for _, row in df_mapa_completo.iterrows():
                     folium.Marker(
                         location=[row['latitude'], row['longitude']],
                         popup=f"<b>{row['operador_normalizado']}</b><br>"
@@ -244,50 +364,68 @@ with tab2:
                     ).add_to(marker_cluster)
             
             elif tipo_mapa == "Zonas":
-                df_con_zona = df_filtrado.dropna(subset=['zona_id'])
-                
-                zonas_filtradas = df_con_zona.groupby('zona_id').agg({
-                    'medicion_id': 'count',
-                    'medida_altitud': 'mean'
-                }).reset_index()
-                zonas_filtradas.columns = ['zona_id', 'total_mediciones', 'altitud_promedio']
-                
-                zonas_info = df_con_zona[['zona_id', 'zona_nombre', 'grid_latitud_inicio', 'grid_latitud_fin',
-                                          'grid_longitud_inicio', 'grid_longitud_fin']].drop_duplicates('zona_id')
-                
-                zonas_filtradas = zonas_filtradas.merge(zonas_info, on='zona_id', how='left')
-                zonas_filtradas['centro_lat'] = (zonas_filtradas['grid_latitud_inicio'] + zonas_filtradas['grid_latitud_fin']) / 2
-                zonas_filtradas['centro_lon'] = (zonas_filtradas['grid_longitud_inicio'] + zonas_filtradas['grid_longitud_fin']) / 2
-                
-                colores_densidad = {
-                    'ALTA': '#ff0000',
-                    'MEDIA': '#ff9900',
-                    'BAJA': '#ffff00'
-                }
-                
-                for _, zona in zonas_filtradas.iterrows():
-                    tipo_zona = zona['zona_nombre'].split('_')[-1]
-                    color = colores_densidad.get(tipo_zona, '#cccccc')
+                # Calcular estadísticas de zonas en tiempo real CON TODOS LOS FILTROS aplicados
+                with st.spinner('Calculando zonas con filtros aplicados...'):
+                    # Usar df_mapa_completo que tiene TODOS los datos filtrados
+                    zonas_filtradas = df_mapa_completo.groupby('zona_id').agg({
+                        'medida_senal': ['mean', 'std', 'count'],
+                        'medida_altitud': 'mean',
+                        'dispositivo_id': 'nunique'
+                    }).reset_index()
                     
-                    bounds = [
-                        [zona['grid_latitud_inicio'], zona['grid_longitud_inicio']],
-                        [zona['grid_latitud_fin'], zona['grid_longitud_fin']]
-                    ]
+                    zonas_filtradas.columns = ['zona_id', 'senal_promedio', 'senal_desviacion', 
+                                               'total_mediciones', 'altitud_promedio', 'dispositivos_unicos']
                     
-                    folium.Rectangle(
-                        bounds=bounds,
-                        color=color,
-                        fill=True,
-                        fillColor=color,
-                        fillOpacity=0.3,
-                        weight=2,
-                        popup=f"<b>{zona['zona_nombre']}</b><br>"
-                              f"Mediciones: {zona['total_mediciones']:,}<br>"
-                              f"Altitud promedio: {zona['altitud_promedio']:.1f} m",
-                        tooltip=f"{zona['zona_nombre']}: {zona['total_mediciones']:,} mediciones"
-                    ).add_to(mapa)
+                    # Unir con dim_zonas para obtener geometría
+                    zonas_info = pd.read_sql_query("""
+                        SELECT zona_id, zona_nombre, grid_latitud_inicio, grid_latitud_fin,
+                               grid_longitud_inicio, grid_longitud_fin
+                        FROM dim_zonas
+                    """, engine)
+                    
+                    zonas_filtradas = zonas_filtradas.merge(zonas_info, on='zona_id')
+                
+                if len(zonas_filtradas) == 0:
+                    st.warning("No hay datos de zonas con los filtros aplicados")
+                else:
+                    # Función para determinar color según calidad de señal
+                    def get_color_calidad(senal):
+                        if senal >= -70:
+                            return '#00ff00'  # EXCELENTE - Verde
+                        elif senal >= -85:
+                            return '#99ff33'  # BUENA - Verde claro
+                        elif senal >= -95:
+                            return '#ffff00'  # REGULAR - Amarillo
+                        elif senal >= -105:
+                            return '#ff9900'  # MALA - Naranja
+                        else:
+                            return '#ff0000'  # CRITICA - Rojo
+                    
+                    for _, zona in zonas_filtradas.iterrows():
+                        color = get_color_calidad(zona['senal_promedio'])
+                        
+                        bounds = [
+                            [zona['grid_latitud_inicio'], zona['grid_longitud_inicio']],
+                            [zona['grid_latitud_fin'], zona['grid_longitud_fin']]
+                        ]
+                        
+                        folium.Rectangle(
+                            bounds=bounds,
+                            color=color,
+                            fill=True,
+                            fillColor=color,
+                            fillOpacity=0.4,  # Reducido de 0.5 a 0.4
+                            weight=1,  # Reducido de 2 a 1
+                            popup=f"<b>{zona['zona_nombre']}</b><br>"
+                                  f"Mediciones (filtradas): {int(zona['total_mediciones']):,}<br>"
+                                  f"Señal promedio: {zona['senal_promedio']:.1f} dBm<br>"
+                                  f"Desviación: ±{zona['senal_desviacion']:.1f} dBm<br>"
+                                  f"Dispositivos: {int(zona['dispositivos_unicos'])}<br>"
+                                  f"Altitud promedio: {zona['altitud_promedio']:.1f} m",
+                            tooltip=f"{zona['zona_nombre']}: {zona['senal_promedio']:.1f} dBm"
+                        ).add_to(mapa)
             
-            folium_static(mapa, width=800, height=600)
+            st_folium(mapa, width=800, height=600, key=map_key, returned_objects=[])
         else:
             st.warning("No hay datos para mostrar en el mapa con los filtros seleccionados")
 
@@ -354,7 +492,7 @@ with tab4:
     with col2:
         st.metric("Señal Promedio", f"{df_device['medida_senal'].mean():.1f} dBm")
     with col3:
-        st.metric("Ubicaciones Únicas", df_device['ubicacion_id'].nunique())
+        st.metric("Zonas Visitadas", df_device['zona_id'].nunique())
     
     st.subheader("Ruta del Dispositivo")
     
@@ -400,7 +538,7 @@ with tab4:
             icon=folium.Icon(color='red', icon='stop')
         ).add_to(mapa_device)
         
-        folium_static(mapa_device, width=900, height=500)
+        st_folium(mapa_device, width=900, height=500, key=f"device_{dispositivo_seleccionado}", returned_objects=[])
     
     st.subheader("Timeline de Señal")
     df_device['timestamp'] = pd.to_datetime(df_device['timestamp'])
